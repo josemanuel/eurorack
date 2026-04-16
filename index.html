@@ -399,10 +399,92 @@ input[type=number]:focus { border-color:var(--accent); }
 }
 #preset-name-inp:focus { border-color:var(--accent); }
 
+
+/* ---- MIDI POPUP ---- */
+#midi-overlay {
+  display:none; position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,0.75); backdrop-filter:blur(4px);
+  align-items:center; justify-content:center;
+}
+#midi-overlay.open { display:flex; }
+#midi-dialog {
+  background:var(--surface); border:1px solid var(--accent);
+  border-radius:14px; padding:28px 32px; min-width:340px; max-width:480px;
+  box-shadow:0 0 40px rgba(0,255,157,0.25);
+}
+#midi-dialog h2 {
+  font-family:var(--font-head); font-size:.85rem; letter-spacing:.2em;
+  color:var(--accent); margin-bottom:6px;
+}
+#midi-dialog p { font-size:.7rem; color:var(--text2); margin-bottom:16px; line-height:1.6; }
+.midi-device-list { display:flex; flex-direction:column; gap:6px; margin-bottom:18px; max-height:200px; overflow-y:auto; }
+.midi-device-item {
+  display:flex; align-items:center; gap:10px; padding:8px 12px;
+  border-radius:8px; border:1px solid var(--border2); cursor:pointer;
+  transition:all .15s; background:var(--module);
+}
+.midi-device-item:hover { border-color:var(--accent); background:rgba(0,255,157,.07); }
+.midi-device-item.selected { border-color:var(--accent); background:rgba(0,255,157,.12); }
+.midi-device-dot { width:8px; height:8px; border-radius:50%; background:var(--text3); flex-shrink:0; }
+.midi-device-item.selected .midi-device-dot { background:var(--accent); box-shadow:var(--glow); }
+.midi-device-name { font-size:.72rem; font-weight:600; color:var(--text); }
+.midi-device-ch { font-size:.62rem; color:var(--text3); margin-left:auto; }
+.midi-no-devices { font-size:.7rem; color:var(--text3); text-align:center; padding:16px; }
+.midi-dialog-btns { display:flex; gap:8px; justify-content:flex-end; }
+#midi-status-badge {
+  display:flex; align-items:center; gap:5px;
+  font-size:.62rem; color:var(--text3); cursor:pointer;
+  padding:4px 8px; border-radius:6px; border:1px solid var(--border2);
+  background:var(--knob-bg); transition:all .15s;
+}
+#midi-status-badge:hover { border-color:var(--accent); }
+#midi-status-dot { width:7px; height:7px; border-radius:50%; background:var(--text3); transition:background .3s; }
+#midi-status-dot.connected { background:var(--accent); box-shadow:var(--glow); }
+#midi-status-dot.partial { background:var(--warn); }
+
+/* ---- FX MODULE ---- */
+.fx-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.fx-section { background:var(--bg); border-radius:8px; padding:10px; border:1px solid var(--border2); }
+.fx-section-title { font-size:.6rem; font-weight:700; letter-spacing:.15em; color:var(--text3); text-transform:uppercase; margin-bottom:10px; }
+.fx-knob-row { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; }
+.fx-bypass-btn { font-size:.6rem; padding:2px 7px; border-radius:4px; border:1px solid var(--border2); background:var(--knob-bg); color:var(--text3); cursor:pointer; }
+.fx-bypass-btn.active { background:rgba(199,125,255,.15); border-color:var(--accent4); color:var(--accent4); }
+
 </style>
 </head>
 <body>
 <div id="app">
+
+<!-- MIDI DEVICE POPUP -->
+<div id="midi-overlay">
+  <div id="midi-dialog">
+    <h2>🎹 MIDI INPUT</h2>
+    <p>Select a connected MIDI device to control the synthesizer. Use MIDI channel filter to receive only specific channels (0 = all channels).</p>
+    <div id="midi-device-list" class="midi-device-list">
+      <div class="midi-no-devices" id="midi-no-dev">Requesting MIDI access…</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <div class="ctrl-col" style="flex-direction:row;align-items:center;gap:8px;">
+        <span style="font-size:.65rem;color:var(--text2);">MIDI CH:</span>
+        <select id="midi-ch-filter" style="width:70px;">
+          <option value="0">ALL</option>
+          <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+          <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+          <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+          <option value="10">10</option><option value="11">11</option><option value="12">12</option>
+          <option value="13">13</option><option value="14">14</option><option value="15">15</option>
+          <option value="16">16</option>
+        </select>
+      </div>
+      <div style="font-size:.62rem;color:var(--text3);" id="midi-last-msg">—</div>
+    </div>
+    <div class="midi-dialog-btns">
+      <button class="btn sm" onclick="closeMidiDialog()">CLOSE</button>
+      <button class="btn sm accent-btn" onclick="refreshMidiDevices()">↺ REFRESH</button>
+    </div>
+  </div>
+</div>
+
 
   <!-- TOP BAR -->
   <div class="top-bar">
@@ -413,6 +495,7 @@ input[type=number]:focus { border-color:var(--accent); }
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <div id="voice-count" style="font-size:.65rem;color:var(--text3);">VOICES: <span id="vc-num" style="color:var(--accent);font-weight:700;">0</span></div>
       <div id="cpu-indicator" style="font-size:.65rem;color:var(--text3);">CPU: <span id="cpu-val" style="color:var(--accent);">—</span></div>
+      <div id="midi-status-badge" onclick="openMidiDialog()" data-tip="MIDI Settings"><div id="midi-status-dot"></div><span id="midi-status-text">MIDI</span></div>
       <button class="btn sm" id="btn-panic" title="All Notes Off">PANIC</button>
       <button class="btn sm" id="btn-audio-on">⚡ AUDIO</button>
       <div class="theme-sw">
@@ -882,51 +965,182 @@ input[type=number]:focus { border-color:var(--accent); }
 
   <div id="status-bar">SYNTHMASTER MODULE v2.0 · Web Audio API · <span id="ctx-state" style="color:var(--accent);">SUSPENDED</span></div>
 
+
+    <!-- ROW 4: FX -->
+    <div style="margin-top:0;">
+      <div class="module" id="mod-fx">
+        <div class="mod-header">
+          <div class="mod-title"><span style="color:var(--accent4);">FX</span> · EFFECTS</div>
+          <div class="mod-badge purple">CHAIN</div>
+        </div>
+        <div class="fx-grid">
+
+          <!-- REVERB -->
+          <div class="fx-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div class="fx-section-title" style="color:var(--accent4);margin-bottom:0;">REVERB</div>
+              <button class="fx-bypass-btn" id="fx-reverb-btn" onclick="toggleFxReverb()">BYPASS</button>
+            </div>
+            <div class="fx-knob-row">
+              <div class="ctrl-col" data-tip="Reverb mix (dry/wet)">
+                <div class="ctrl-label">MIX</div>
+                <div id="fx-rev-mix-knob" class="knob-wrap sm" data-min="0" data-max="1" data-val="0.2" data-param="fx-rev-mix" data-defval="0.2"></div>
+                <span class="ctrl-val" id="fx-rev-mix-val" style="color:var(--accent4);">20%</span>
+              </div>
+              <div class="ctrl-col" data-tip="Reverb decay time">
+                <div class="ctrl-label">DECAY</div>
+                <div id="fx-rev-decay-knob" class="knob-wrap sm" data-min="0.2" data-max="8" data-val="2.5" data-param="fx-rev-decay" data-defval="2.5"></div>
+                <span class="ctrl-val" id="fx-rev-decay-val" style="color:var(--accent4);">2.5s</span>
+              </div>
+              <div class="ctrl-col" data-tip="Reverb pre-delay">
+                <div class="ctrl-label">PRE-DLY</div>
+                <div id="fx-rev-predly-knob" class="knob-wrap sm" data-min="0" data-max="0.1" data-val="0.02" data-param="fx-rev-predly" data-defval="0.02"></div>
+                <span class="ctrl-val" id="fx-rev-predly-val" style="color:var(--accent4);">20ms</span>
+              </div>
+              <div class="ctrl-col" data-tip="Reverb high-frequency damping">
+                <div class="ctrl-label">DAMP</div>
+                <div id="fx-rev-damp-knob" class="knob-wrap sm" data-min="0" data-max="1" data-val="0.5" data-param="fx-rev-damp" data-defval="0.5"></div>
+                <span class="ctrl-val" id="fx-rev-damp-val" style="color:var(--accent4);">50%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- DELAY -->
+          <div class="fx-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div class="fx-section-title" style="color:var(--accent2);margin-bottom:0;">DELAY</div>
+              <button class="fx-bypass-btn" id="fx-delay-btn" onclick="toggleFxDelay()">BYPASS</button>
+            </div>
+            <div class="fx-knob-row">
+              <div class="ctrl-col" data-tip="Delay mix (dry/wet)">
+                <div class="ctrl-label">MIX</div>
+                <div id="fx-dly-mix-knob" class="knob-wrap sm" data-min="0" data-max="1" data-val="0.25" data-param="fx-dly-mix" data-defval="0.25"></div>
+                <span class="ctrl-val" id="fx-dly-mix-val" style="color:var(--accent2);">25%</span>
+              </div>
+              <div class="ctrl-col" data-tip="Delay time in ms">
+                <div class="ctrl-label">TIME</div>
+                <div id="fx-dly-time-knob" class="knob-wrap sm" data-min="0.01" data-max="1.0" data-val="0.375" data-param="fx-dly-time" data-defval="0.375"></div>
+                <span class="ctrl-val" id="fx-dly-time-val" style="color:var(--accent2);">375ms</span>
+              </div>
+              <div class="ctrl-col" data-tip="Delay feedback (0-95%)">
+                <div class="ctrl-label">FDBK</div>
+                <div id="fx-dly-fdbk-knob" class="knob-wrap sm" data-min="0" data-max="0.95" data-val="0.4" data-param="fx-dly-fdbk" data-defval="0.4"></div>
+                <span class="ctrl-val" id="fx-dly-fdbk-val" style="color:var(--accent2);">40%</span>
+              </div>
+              <div class="ctrl-col" data-tip="Delay high-frequency filter">
+                <div class="ctrl-label">TONE</div>
+                <div id="fx-dly-tone-knob" class="knob-wrap sm" data-min="500" data-max="18000" data-val="6000" data-param="fx-dly-tone" data-defval="6000"></div>
+                <span class="ctrl-val" id="fx-dly-tone-val" style="color:var(--accent2);">6kHz</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
 </div><!-- /app -->
 
 <script>
 'use strict';
 // ================================================================
-//  AUDIO ENGINE
+//  AUDIO ENGINE  — Polyphonic per-voice envelopes + FX chain
 // ================================================================
 const AC = new (window.AudioContext || window.webkitAudioContext)();
 
-// Node graph:
-// [OSC1/OSC2/NOISE] → [MixGains] → [DriveShaper] → [Filter] → [VCA Gain] → [MasterGain] → destination
+// ---- MASTER / LIMITER ----
 const masterGain    = AC.createGain();
-const vcaGain       = AC.createGain();
+const limiterNode   = AC.createDynamicsCompressor();
+limiterNode.threshold.value = -3;
+limiterNode.knee.value      = 0;
+limiterNode.ratio.value     = 20;
+limiterNode.attack.value    = 0.001;
+limiterNode.release.value   = 0.05;
+
+masterGain.gain.value = 0.75;
+
+// ---- GLOBAL FILTER (tone-shaping, shared) ----
 const filterNode    = AC.createBiquadFilter();
 const driveGain     = AC.createGain();
-const driveWS       = AC.createWaveShaper();   // saturation waveshaper
-const reverbConv    = AC.createConvolver();
-const reverbWet     = AC.createGain();
-const reverbDry     = AC.createGain();
+const driveWS       = AC.createWaveShaper();
 
-masterGain.gain.value  = 0.75;
-vcaGain.gain.value     = 0.0001;
-filterNode.type        = 'lowpass';
+filterNode.type            = 'lowpass';
 filterNode.frequency.value = 8000;
-filterNode.Q.value     = 1;
-driveGain.gain.value   = 1;
-driveWS.curve          = makeSaturatorCurve(1);
-reverbWet.gain.value   = 0.15;
-reverbDry.gain.value   = 0.85;
+filterNode.Q.value         = 1;
+driveGain.gain.value       = 1;
+driveWS.curve              = makeSaturatorCurve(1);
 
-// Build reverb impulse
-buildReverbImpulse();
+// ---- REVERB ----
+const reverbConv      = AC.createConvolver();
+const reverbPreDelay  = AC.createDelay(0.2);
+const reverbDampFilter= AC.createBiquadFilter();
+const reverbWet       = AC.createGain();
+const reverbDry       = AC.createGain();
 
-// Signal chain
+reverbPreDelay.delayTime.value   = 0.02;
+reverbDampFilter.type            = 'lowpass';
+reverbDampFilter.frequency.value = 8000;
+reverbWet.gain.value = 0.2;
+reverbDry.gain.value = 0.8;
+buildReverbImpulse(2.5, 0.5);
+
+// ---- DELAY ----
+const delayNode       = AC.createDelay(2.0);
+const delayFeedback   = AC.createGain();
+const delayToneFilter = AC.createBiquadFilter();
+const delayWet        = AC.createGain();
+const delayDry        = AC.createGain();
+
+delayNode.delayTime.value        = 0.375;
+delayFeedback.gain.value         = 0.4;
+delayToneFilter.type             = 'lowpass';
+delayToneFilter.frequency.value  = 6000;
+delayWet.gain.value  = 0.25;
+delayDry.gain.value  = 0.75;
+
+// ---- POLYPHONIC VOICE BUS ----
+// All voices share the drive→filter→fx→master path for efficiency
+// Per-voice: individual VCA gain + individual filter gain for VCF envelope
+
+// Signal chain:
+// [voice bus] → driveGain → driveWS → filterNode
+//   → [dry path] → reverbPreDelay → reverbConv → reverbDampFilter → reverbWet → masterGain
+//   → [dry path] → reverbDry → masterGain
+//   → [delay path] via separate tap
+// masterGain → limiter → destination
+
+const voiceBus = AC.createGain();
+voiceBus.gain.value = 1;
+
+// Build FX routing
 driveGain.connect(driveWS);
 driveWS.connect(filterNode);
-filterNode.connect(vcaGain);
-vcaGain.connect(reverbDry);
-vcaGain.connect(reverbConv);
-reverbConv.connect(reverbWet);
+
+// Filter → FX dry/wet for reverb
+filterNode.connect(reverbDry);
+filterNode.connect(reverbPreDelay);
+reverbPreDelay.connect(reverbConv);
+reverbConv.connect(reverbDampFilter);
+reverbDampFilter.connect(reverbWet);
 reverbDry.connect(masterGain);
 reverbWet.connect(masterGain);
-masterGain.connect(AC.destination);
 
-// Mixer gains (pre-drive)
+// Filter → delay (parallel to reverb)
+filterNode.connect(delayDry);
+filterNode.connect(delayNode);
+delayNode.connect(delayToneFilter);
+delayToneFilter.connect(delayFeedback);
+delayFeedback.connect(delayNode);       // feedback loop
+delayToneFilter.connect(delayWet);
+delayDry.connect(masterGain);
+delayWet.connect(masterGain);
+
+masterGain.connect(limiterNode);
+limiterNode.connect(AC.destination);
+
+// ---- MIXER GAINS (per-source, pre-drive) ----
+// NOTE: Per voice, we create individual osc gains that feed voiceBus → driveGain
+// These mixer gains scale the base per-source level
 const mixGains = {
   osc1:   AC.createGain(),
   osc2:   AC.createGain(),
@@ -937,20 +1151,32 @@ mixGains.osc1.gain.value  = 0.8;
 mixGains.osc2.gain.value  = 0.7;
 mixGains.noise.gain.value = 0.0;
 mixGains.ring.gain.value  = 0.5;
+// We'll route through voiceBus for polyphony scaling
 Object.values(mixGains).forEach(g => g.connect(driveGain));
 
-// Noise generator (persistent)
+// ---- NOISE GENERATOR ----
 let noiseSource = null;
-let noisePinkSource = null;
 let noiseGainNode = AC.createGain();
 noiseGainNode.gain.value = 0;
 noiseGainNode.connect(mixGains.noise);
 
-// Ring mod node
-let ringModNode = null;
-
-// Active voices: { noteNum: { osc1, osc2, vcaEnv, filterEnv, ... } }
+// ---- VOICE MANAGEMENT ----
+// Each voice has its own VCA gain envelope and per-voice VCF frequency automation
+// activeVoices[noteNum] = { osc1, osc2, vcaGain, vcfFilter, ringNode, ... }
 const activeVoices = {};
+
+// Dynamic polyphony limiter: scale gain based on voice count to prevent clipping
+function getPolyScale() {
+  const n = Object.keys(activeVoices).length + 1; // +1 for the note being added
+  // Use -3dB per doubling: scale = 1/sqrt(n), capped for musical feel
+  return Math.min(1.0, 1.0 / Math.sqrt(Math.max(1, n)));
+}
+
+// FX state
+const FX = {
+  reverb: { enabled: true, mix: 0.2, decay: 2.5, predly: 0.02, damp: 0.5 },
+  delay:  { enabled: true, mix: 0.25, time: 0.375, feedback: 0.4, tone: 6000 },
+};
 
 // ================================================================
 //  SYNTH STATE
@@ -1024,15 +1250,24 @@ function startNoiseGenerator() {
   window._setNoisePink  = () => { useWhite = false; };
 }
 
-function buildReverbImpulse() {
-  const sr = AC.sampleRate, len = sr * 2.5;
+function buildReverbImpulse(decayTime, dampAmt) {
+  decayTime = decayTime || 2.5;
+  dampAmt   = dampAmt   || 0.5;
+  const sr = AC.sampleRate;
+  const len = Math.max(sr * 0.5, sr * decayTime);
   const buf = AC.createBuffer(2, len, sr);
+  const exp = 3.0 + dampAmt * 4; // steeper decay with more damping
   for (let c = 0; c < 2; c++) {
     const d = buf.getChannelData(c);
-    for (let i = 0; i < len; i++)
-      d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 2.2);
+    for (let i = 0; i < len; i++) {
+      d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, exp);
+    }
   }
   reverbConv.buffer = buf;
+  // Apply damping via filter cutoff
+  if (reverbDampFilter) {
+    reverbDampFilter.frequency.value = 500 + (1 - dampAmt) * 17500;
+  }
 }
 
 function makeSaturatorCurve(drive) {
@@ -1054,11 +1289,54 @@ function noteOn(midiNote, velocity) {
   if (!S.audioReady) return;
   if (activeVoices[midiNote]) noteOff(midiNote);
 
-  const vel = S.velSens > 0 ? (velocity / 127) * S.velSens + (1 - S.velSens) : 1;
-  const now = AC.currentTime;
+  const vel   = S.velSens > 0 ? (velocity / 127) * S.velSens + (1 - S.velSens) : 1;
+  const now   = AC.currentTime;
   const voice = {};
 
-  // --- OSC 1 ---
+  // Per-voice polyphony scaling to prevent saturation on chords
+  const polyScale = getPolyScale();
+  // Update ALL active voices to rescale (soft downscale)
+  Object.values(activeVoices).forEach(v => {
+    if (v.vcaGain) {
+      const cur = v.vcaGain.gain.value;
+      v.vcaGain.gain.setTargetAtTime(cur * polyScale, now, 0.015);
+    }
+  });
+
+  // ---- PER-VOICE VCF FILTER ----
+  const vcfFilt = AC.createBiquadFilter();
+  vcfFilt.type            = S.vcf.type;
+  vcfFilt.frequency.value = S.vcf.cutoff;
+  vcfFilt.Q.value         = S.vcf.reso;
+  voice.vcfFilt = vcfFilt;
+
+  // Apply VCF envelope per-voice
+  const baseCutoff = S.vcf.cutoff;
+  const envRange   = baseCutoff * Math.abs(S.vcf.envAmt) * 3 * (S.vcf.envAmt < 0 ? -1 : 1);
+  vcfFilt.frequency.setValueAtTime(baseCutoff, now);
+  vcfFilt.frequency.linearRampToValueAtTime(
+    Math.max(20, Math.min(20000, baseCutoff + envRange)), now + S.vcf.atk);
+  vcfFilt.frequency.linearRampToValueAtTime(
+    Math.max(20, Math.min(20000, baseCutoff + envRange * S.vcf.sus)), now + S.vcf.atk + S.vcf.dec);
+
+  // ---- PER-VOICE VCA GAIN ----
+  const vcaGainNode = AC.createGain();
+  vcaGainNode.gain.setValueAtTime(0.0001, now);
+  vcaGainNode.gain.linearRampToValueAtTime(vel * polyScale, now + S.vca.atk);
+  vcaGainNode.gain.linearRampToValueAtTime(vel * S.vca.sus * polyScale, now + S.vca.atk + S.vca.dec);
+  voice.vcaGain = vcaGainNode;
+
+  // ---- PER-VOICE PRE-MIX BUS ----
+  const voicePreBus = AC.createGain();
+  voicePreBus.gain.value = 1;
+  voice.preBus = voicePreBus;
+
+  // Route: voicePreBus → vcfFilt → vcaGainNode → driveGain
+  voicePreBus.connect(vcfFilt);
+  vcfFilt.connect(vcaGainNode);
+  vcaGainNode.connect(driveGain);
+
+  // ---- OSC 1 ----
   if (!S.osc[1].mute) {
     const freq = midiNoteToFreq(midiNote + S.osc[1].semi + S.osc[1].oct * 12);
     if (S.osc[1].wave === 'pwm') {
@@ -1070,14 +1348,14 @@ function noteOn(midiNote, velocity) {
       voice.osc1.detune.value = S.osc[1].detune;
     }
     const g1 = AC.createGain();
-    g1.gain.value = S.osc[1].level * vel;
+    g1.gain.value = S.osc[1].level * mixGains.osc1.gain.value;
     voice.osc1.connect(g1);
-    g1.connect(mixGains.osc1);
+    g1.connect(voicePreBus);
     voice.osc1.start(now);
     voice.osc1gain = g1;
   }
 
-  // --- OSC 2 ---
+  // ---- OSC 2 ----
   if (!S.osc[2].mute) {
     const freq2 = midiNoteToFreq(midiNote + S.osc[2].semi + S.osc[2].oct * 12);
     if (S.osc[2].wave === 'pwm') {
@@ -1089,54 +1367,30 @@ function noteOn(midiNote, velocity) {
       voice.osc2.detune.value = S.osc[2].detune;
     }
     const g2 = AC.createGain();
-    g2.gain.value = S.osc[2].level * vel;
+    g2.gain.value = S.osc[2].level * mixGains.osc2.gain.value;
     voice.osc2.connect(g2);
-    g2.connect(mixGains.osc2);
+    g2.connect(voicePreBus);
     voice.osc2.start(now);
     voice.osc2gain = g2;
   }
 
-  // --- RING MOD ---
+  // ---- RING MOD ----
   if (S.ring.enabled && voice.osc1 && voice.osc2) {
     const ringNode = AC.createGain();
     ringNode.gain.value = 0;
     if (S.ring.src === 'osc1xosc2') {
       voice.osc2.connect(ringNode.gain);
     } else {
-      // noise × osc1
       noiseGainNode.connect(ringNode.gain);
     }
     (S.ring.src === 'osc1xosc2' ? voice.osc1 : voice.osc2).connect(ringNode);
     const ringGainCtrl = AC.createGain();
-    ringGainCtrl.gain.value = S.ring.amount;
+    ringGainCtrl.gain.value = S.ring.amount * mixGains.ring.gain.value;
     ringNode.connect(ringGainCtrl);
-    ringGainCtrl.connect(mixGains.ring);
+    ringGainCtrl.connect(voicePreBus);
     voice.ringNode = ringNode;
     voice.ringGainCtrl = ringGainCtrl;
   }
-
-  // --- VCA ENVELOPE ---
-  const vcaEnv = AC.createGain();
-  vcaEnv.gain.setValueAtTime(0.0001, now);
-  vcaEnv.gain.linearRampToValueAtTime(vel, now + S.vca.atk);
-  vcaEnv.gain.linearRampToValueAtTime(vel * S.vca.sus, now + S.vca.atk + S.vca.dec);
-  // Connect voice gains through VCA env → filter
-  [voice.osc1gain, voice.osc2gain, voice.ringGainCtrl].filter(Boolean).forEach(g => {
-    // Re-route: disconnect from mix, add vcaEnv in chain
-  });
-  // Simpler: per-voice VCA gain node before mixGains already applied above
-  voice.vcaEnv = vcaEnv;
-
-  // --- VCF ENVELOPE ---
-  const baseCutoff = S.vcf.cutoff;
-  const envRange   = baseCutoff * S.vcf.envAmt * 3;
-  const now2 = now;
-  filterNode.frequency.cancelScheduledValues(now2);
-  filterNode.frequency.setValueAtTime(filterNode.frequency.value, now2);
-  filterNode.frequency.linearRampToValueAtTime(
-    Math.min(20000, baseCutoff + envRange), now2 + S.vcf.atk);
-  filterNode.frequency.linearRampToValueAtTime(
-    baseCutoff + envRange * S.vcf.sus, now2 + S.vcf.atk + S.vcf.dec);
 
   activeVoices[midiNote] = voice;
   updateVoiceCount();
@@ -1146,23 +1400,57 @@ function noteOff(midiNote) {
   const voice = activeVoices[midiNote];
   if (!voice) return;
   const now = AC.currentTime;
-  const rel = S.vca.rel;
+  const vcaRel = S.vca.rel;
+  const vcfRel = S.vcf.rel;
 
-  // Filter release
-  filterNode.frequency.cancelScheduledValues(now);
-  filterNode.frequency.setValueAtTime(filterNode.frequency.value, now);
-  filterNode.frequency.linearRampToValueAtTime(S.vcf.cutoff * 0.3, now + S.vcf.rel);
+  // Per-voice VCF release
+  if (voice.vcfFilt) {
+    const baseCutoff = S.vcf.cutoff;
+    voice.vcfFilt.frequency.cancelScheduledValues(now);
+    voice.vcfFilt.frequency.setValueAtTime(voice.vcfFilt.frequency.value, now);
+    voice.vcfFilt.frequency.linearRampToValueAtTime(
+      Math.max(20, baseCutoff * 0.3), now + vcfRel);
+  }
 
-  // Stop oscillators with release ramp via gain
-  [voice.osc1gain, voice.osc2gain].filter(Boolean).forEach(g => {
-    g.gain.cancelScheduledValues(now);
-    g.gain.setValueAtTime(g.gain.value, now);
-    g.gain.linearRampToValueAtTime(0.0001, now + rel);
-  });
+  // Per-voice VCA release
+  if (voice.vcaGain) {
+    const curVol = voice.vcaGain.gain.value;
+    voice.vcaGain.gain.cancelScheduledValues(now);
+    voice.vcaGain.gain.setValueAtTime(curVol, now);
+    voice.vcaGain.gain.linearRampToValueAtTime(0.0001, now + vcaRel);
+  }
 
+  // Rescale remaining voices slightly upward (within safe ceiling)
+  const remainingVoices = Object.keys(activeVoices).length - 1; // after this one is deleted
+  if (remainingVoices > 0) {
+    const newPolyScale = Math.min(1.0, 1.0 / Math.sqrt(Math.max(1, remainingVoices)));
+    Object.entries(activeVoices).forEach(([note, v]) => {
+      if (parseInt(note) !== midiNote && v.vcaGain) {
+        v.vcaGain.gain.setTargetAtTime(
+          Math.min(1.0, v.vcaGain.gain.value * (1 / getPolyScale()) * newPolyScale),
+          now, 0.02
+        );
+      }
+    });
+  }
+
+  // Stop oscillators after release
   [voice.osc1, voice.osc2].filter(Boolean).forEach(o => {
-    try { o.stop(now + rel + 0.05); } catch(e){}
+    try { o.stop(now + vcaRel + 0.05); } catch(e){}
   });
+
+  // Disconnect after full release
+  setTimeout(() => {
+    try {
+      if (voice.preBus)   voice.preBus.disconnect();
+      if (voice.vcfFilt)  voice.vcfFilt.disconnect();
+      if (voice.vcaGain)  voice.vcaGain.disconnect();
+      if (voice.osc1gain) voice.osc1gain.disconnect();
+      if (voice.osc2gain) voice.osc2gain.disconnect();
+      if (voice.ringNode) { voice.ringNode.disconnect(); }
+      if (voice.ringGainCtrl) voice.ringGainCtrl.disconnect();
+    } catch(e){}
+  }, (vcaRel + 0.2) * 1000);
 
   delete activeVoices[midiNote];
   updateVoiceCount();
@@ -1186,9 +1474,6 @@ function makePWMOsc(freq, pw, detune) {
 
 function allNotesOff() {
   Object.keys(activeVoices).forEach(n => noteOff(parseInt(n)));
-  // Reset filter
-  filterNode.frequency.cancelScheduledValues(AC.currentTime);
-  filterNode.frequency.setValueAtTime(S.vcf.cutoff, AC.currentTime);
 }
 
 function updateVoiceCount() {
@@ -1291,9 +1576,14 @@ function setFilterSlope(type, slope, el) {
   document.querySelectorAll('.slope-pill').forEach(p => p.classList.remove('sel'));
   el.classList.add('sel');
   filterNode.type = type;
-  // 24dB LP: chain 2 filters (simplified with high Q)
-  if (slope === 24) filterNode.Q.value = Math.max(S.vcf.reso, 4);
-  else filterNode.Q.value = S.vcf.reso;
+  filterNode.Q.value = slope === 24 ? Math.max(S.vcf.reso, 4) : S.vcf.reso;
+  // Update per-voice filters
+  Object.values(activeVoices).forEach(v => {
+    if (v.vcfFilt) {
+      v.vcfFilt.type = type;
+      v.vcfFilt.Q.value = filterNode.Q.value;
+    }
+  });
 }
 
 function setVcfEnvAmt(val) {
@@ -1539,7 +1829,9 @@ function applyKnobValue(param, val, isLog) {
     'vcf-reso':    (v) => { S.vcf.reso = v; filterNode.Q.value = v; document.getElementById('vcf-reso-val').textContent = v.toFixed(1); },
     'vcf-drive':   (v) => { S.vcf.drive = v; driveGain.gain.value = v; driveWS.curve = makeSaturatorCurve(v); document.getElementById('vcf-drive-val').textContent = '×'+v.toFixed(1); },
   };
-  if (map[param]) map[param](val);
+  if (map[param]) { map[param](val); return; }
+  // FX knobs
+  if (param.startsWith('fx-')) applyFxKnob(param, val);
 }
 
 // ================================================================
@@ -1895,6 +2187,264 @@ window.synthCC      = (cc, val)   => {
   if (cc === 1)  { /* mod wheel → filter */ }
 };
 
+
+// ================================================================
+//  FX CONTROLS — Reverb + Delay
+// ================================================================
+function toggleFxReverb() {
+  FX.reverb.enabled = !FX.reverb.enabled;
+  const btn = document.getElementById('fx-reverb-btn');
+  btn.classList.toggle('active', FX.reverb.enabled);
+  btn.textContent = FX.reverb.enabled ? 'ACTIVE' : 'BYPASS';
+  reverbWet.gain.value = FX.reverb.enabled ? FX.reverb.mix : 0;
+  reverbDry.gain.value = 1.0;
+}
+
+function toggleFxDelay() {
+  FX.delay.enabled = !FX.delay.enabled;
+  const btn = document.getElementById('fx-delay-btn');
+  btn.classList.toggle('active', FX.delay.enabled);
+  btn.textContent = FX.delay.enabled ? 'ACTIVE' : 'BYPASS';
+  delayWet.gain.value = FX.delay.enabled ? FX.delay.mix : 0;
+  delayDry.gain.value = 1.0;
+}
+
+function applyFxKnob(param, val) {
+  switch(param) {
+    case 'fx-rev-mix':
+      FX.reverb.mix = val;
+      reverbWet.gain.value = FX.reverb.enabled ? val : 0;
+      reverbDry.gain.value = FX.reverb.enabled ? (1 - val * 0.5) : 1.0;
+      document.getElementById('fx-rev-mix-val').textContent = Math.round(val*100)+'%';
+      break;
+    case 'fx-rev-decay':
+      FX.reverb.decay = val;
+      buildReverbImpulse(val, FX.reverb.damp);
+      document.getElementById('fx-rev-decay-val').textContent = val.toFixed(1)+'s';
+      break;
+    case 'fx-rev-predly':
+      FX.reverb.predly = val;
+      reverbPreDelay.delayTime.value = val;
+      document.getElementById('fx-rev-predly-val').textContent = Math.round(val*1000)+'ms';
+      break;
+    case 'fx-rev-damp':
+      FX.reverb.damp = val;
+      reverbDampFilter.frequency.value = 500 + (1-val)*17500;
+      buildReverbImpulse(FX.reverb.decay, val);
+      document.getElementById('fx-rev-damp-val').textContent = Math.round(val*100)+'%';
+      break;
+    case 'fx-dly-mix':
+      FX.delay.mix = val;
+      delayWet.gain.value = FX.delay.enabled ? val : 0;
+      delayDry.gain.value = FX.delay.enabled ? (1 - val * 0.5) : 1.0;
+      document.getElementById('fx-dly-mix-val').textContent = Math.round(val*100)+'%';
+      break;
+    case 'fx-dly-time':
+      FX.delay.time = val;
+      delayNode.delayTime.setTargetAtTime(val, AC.currentTime, 0.05);
+      document.getElementById('fx-dly-time-val').textContent = Math.round(val*1000)+'ms';
+      break;
+    case 'fx-dly-fdbk':
+      FX.delay.feedback = val;
+      delayFeedback.gain.setTargetAtTime(val, AC.currentTime, 0.05);
+      document.getElementById('fx-dly-fdbk-val').textContent = Math.round(val*100)+'%';
+      break;
+    case 'fx-dly-tone':
+      FX.delay.tone = val;
+      delayToneFilter.frequency.value = val;
+      document.getElementById('fx-dly-tone-val').textContent = val >= 1000 ? (val/1000).toFixed(1)+'kHz' : Math.round(val)+'Hz';
+      break;
+  }
+}
+
+// ================================================================
+//  MIDI SYSTEM
+// ================================================================
+let midiAccess       = null;
+let midiSelectedInput = null;
+let midiChannelFilter = 0; // 0 = all
+
+async function requestMidi() {
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    midiAccess.onstatechange = onMidiStateChange;
+    populateMidiDevices();
+    updateMidiStatusBadge();
+  } catch(err) {
+    document.getElementById('midi-no-dev').textContent = 'MIDI access denied: ' + err.message;
+    updateMidiStatusBadge();
+  }
+}
+
+function openMidiDialog() {
+  document.getElementById('midi-overlay').classList.add('open');
+  if (!midiAccess) {
+    requestMidi().then(populateMidiDevices);
+  } else {
+    populateMidiDevices();
+  }
+}
+
+function closeMidiDialog() {
+  document.getElementById('midi-overlay').classList.remove('open');
+}
+
+function refreshMidiDevices() {
+  if (!midiAccess) { requestMidi(); return; }
+  populateMidiDevices();
+}
+
+function populateMidiDevices() {
+  const list = document.getElementById('midi-device-list');
+  if (!midiAccess) {
+    list.innerHTML = '<div class="midi-no-devices">No MIDI access. Click REFRESH to try again.</div>';
+    return;
+  }
+  const inputs = Array.from(midiAccess.inputs.values());
+  if (!inputs.length) {
+    list.innerHTML = '<div class="midi-no-devices">No MIDI devices found. Connect a device and click REFRESH.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  inputs.forEach(input => {
+    const item = document.createElement('div');
+    item.className = 'midi-device-item' + (midiSelectedInput && midiSelectedInput.id === input.id ? ' selected' : '');
+    item.innerHTML = `<div class="midi-device-dot"></div>
+      <span class="midi-device-name">${input.name}</span>
+      <span class="midi-device-ch">${input.manufacturer || 'MIDI'}</span>`;
+    item.onclick = () => selectMidiDevice(input.id);
+    list.appendChild(item);
+  });
+}
+
+function selectMidiDevice(id) {
+  if (!midiAccess) return;
+  // Detach previous
+  if (midiSelectedInput) {
+    midiSelectedInput.onmidimessage = null;
+  }
+  const input = midiAccess.inputs.get(id);
+  if (!input) return;
+  midiSelectedInput = input;
+  input.onmidimessage = onMidiMessage;
+  midiChannelFilter = parseInt(document.getElementById('midi-ch-filter').value) || 0;
+  document.getElementById('midi-ch-filter').onchange = () => {
+    midiChannelFilter = parseInt(document.getElementById('midi-ch-filter').value) || 0;
+  };
+  populateMidiDevices();
+  updateMidiStatusBadge();
+  closeMidiDialog();
+}
+
+function onMidiStateChange(e) {
+  populateMidiDevices();
+  updateMidiStatusBadge();
+  // If selected device disconnected
+  if (midiSelectedInput && e.port.id === midiSelectedInput.id && e.port.state === 'disconnected') {
+    midiSelectedInput = null;
+    updateMidiStatusBadge();
+  }
+}
+
+function onMidiMessage(e) {
+  initAudio();
+  const [status, data1, data2] = e.data;
+  const type    = status & 0xF0;
+  const channel = (status & 0x0F) + 1;
+
+  if (midiChannelFilter > 0 && channel !== midiChannelFilter) return;
+
+  // Display last message
+  const msgEl = document.getElementById('midi-last-msg');
+  if (msgEl) {
+    const typeNames = {0x80:'NoteOff',0x90:'NoteOn',0xA0:'AfterTouch',0xB0:'CC',0xC0:'PrgChg',0xE0:'PitchBend'};
+    msgEl.textContent = `CH${channel} ${typeNames[type]||'?'} ${data1} ${data2}`;
+  }
+
+  switch(type) {
+    case 0x90: // Note On
+      if (data2 > 0) {
+        if (S.arp.enabled) { arpAddNote(data1); if (!arpSeq.length || arpLastNote < 0) startArp(); }
+        else noteOn(data1, data2);
+      } else {
+        // velocity 0 = note off
+        if (S.arp.enabled) arpRemoveNote(data1);
+        else noteOff(data1);
+      }
+      break;
+    case 0x80: // Note Off
+      if (S.arp.enabled) arpRemoveNote(data1);
+      else noteOff(data1);
+      break;
+    case 0xB0: // CC
+      handleMidiCC(data1, data2, channel);
+      break;
+    case 0xE0: // Pitch Bend
+      handlePitchBend(data1, data2);
+      break;
+  }
+}
+
+function handleMidiCC(cc, val, ch) {
+  const norm = val / 127;
+  switch(cc) {
+    case 7:   setMasterVol(norm); document.getElementById('master-vol').value = norm; break;
+    case 74:  // Filter cutoff
+      S.vcf.cutoff = 20 * Math.pow(1000, norm);
+      filterNode.frequency.value = S.vcf.cutoff;
+      break;
+    case 71:  // Resonance
+      S.vcf.reso = 0.1 + norm * 19.9;
+      filterNode.Q.value = S.vcf.reso;
+      break;
+    case 1:   // Mod wheel → reverb mix
+      FX.reverb.mix = norm * 0.8;
+      if (FX.reverb.enabled) reverbWet.gain.value = FX.reverb.mix;
+      break;
+    case 91:  // Reverb send
+      applyFxKnob('fx-rev-mix', norm * 0.9);
+      document.getElementById('fx-rev-mix-knob').dataset.val = norm * 0.9;
+      drawKnob(document.getElementById('fx-rev-mix-knob'));
+      break;
+    case 93:  // Chorus/Delay send
+      applyFxKnob('fx-dly-mix', norm * 0.9);
+      document.getElementById('fx-dly-mix-knob').dataset.val = norm * 0.9;
+      drawKnob(document.getElementById('fx-dly-mix-knob'));
+      break;
+    case 120: case 123: allNotesOff(); break;
+    case 64:  // Sustain pedal
+      // Could implement sustain pedal logic here
+      break;
+  }
+}
+
+let pitchBendSemitones = 0;
+function handlePitchBend(lsb, msb) {
+  const raw = (msb << 7 | lsb) - 8192;
+  pitchBendSemitones = (raw / 8192) * 2; // ±2 semitones
+  Object.values(activeVoices).forEach(v => {
+    if (v.osc1 && v.osc1.detune) v.osc1.detune.value = S.osc[1].detune + pitchBendSemitones * 100;
+    if (v.osc2 && v.osc2.detune) v.osc2.detune.value = S.osc[2].detune + pitchBendSemitones * 100;
+  });
+}
+
+function updateMidiStatusBadge() {
+  const dot  = document.getElementById('midi-status-dot');
+  const text = document.getElementById('midi-status-text');
+  if (!dot || !text) return;
+  if (midiSelectedInput) {
+    dot.className = 'connected';
+    text.textContent = midiSelectedInput.name.substring(0, 12);
+  } else if (midiAccess) {
+    dot.className = 'partial';
+    text.textContent = 'NO DEV';
+  } else {
+    dot.className = '';
+    text.textContent = 'MIDI';
+  }
+}
+
+
 // ================================================================
 //  THEME
 // ================================================================
@@ -1935,6 +2485,20 @@ window.onload = () => {
 
   document.getElementById('ctx-state').textContent = AC.state.toUpperCase();
   AC.onstatechange = () => { document.getElementById('ctx-state').textContent = AC.state.toUpperCase(); };
+
+  // Init FX buttons
+  document.getElementById('fx-reverb-btn').classList.add('active');
+  document.getElementById('fx-reverb-btn').textContent = 'ACTIVE';
+  document.getElementById('fx-delay-btn').classList.add('active');
+  document.getElementById('fx-delay-btn').textContent = 'ACTIVE';
+
+  // Request MIDI and auto-open dialog
+  if (navigator.requestMIDIAccess) {
+    requestMidi().then(() => {
+      // Auto-open MIDI dialog on first load so user can select device
+      setTimeout(() => { openMidiDialog(); }, 400);
+    });
+  }
 };
 
 /* ================================================================
