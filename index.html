@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Eurorack Module · Synthesizer</title>
+<title>MIDI Master Pro · Synthesizer</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
 <style>
 /* ============================================================
@@ -542,7 +542,7 @@ input[type=number]:focus { border-color:var(--accent); }
   <!-- TOP BAR -->
   <div class="top-bar">
     <div>
-      <div class="app-title">EURORACK · MODULE</div>
+      <div class="app-title">SYNTHMASTER · MODULE</div>
       <div class="app-sub">Professional Eurorack-Style Synthesizer · Web Audio API</div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -987,7 +987,7 @@ input[type=number]:focus { border-color:var(--accent); }
     </div>
   </div>
 
-  <div id="status-bar">EURORACK MODULE v2.0 · Web Audio API · <span id="ctx-state" style="color:var(--accent);">SUSPENDED</span></div>
+  <div id="status-bar">SYNTHMASTER MODULE v2.0 · Web Audio API · <span id="ctx-state" style="color:var(--accent);">SUSPENDED</span></div>
 
 
     <!-- ROW 4: FX -->
@@ -1167,27 +1167,35 @@ const voiceBus = AC.createGain();
 voiceBus.gain.value = 1;
 
 // Build FX routing
-driveGain.connect(driveWS);
-driveWS.connect(filterNode);
+// NOTE: driveWS (WaveShaper) removed from shared chain — applying nonlinear
+// saturation to the sum of all polyphonic voices creates intermodulation distortion.
+// driveGain now connects directly to filterNode. Drive knob = pre-filter gain only.
+driveGain.connect(filterNode);
 
-// Filter → FX dry/wet for reverb
-filterNode.connect(reverbDry);
+// ---- FX ROUTING (single dry path, parallel wet sends) ----
+// filterNode → dryBus → masterGain          (dry signal, ONE path only)
+// filterNode → reverbSend → ... → masterGain  (reverb wet)
+// filterNode → delaySend → ... → masterGain   (delay wet)
+//
+// reverbDry/delayDry are repurposed as send-level controls (not duplicate dry paths)
+
+// REVERB send
 filterNode.connect(reverbPreDelay);
 reverbPreDelay.connect(reverbConv);
 reverbConv.connect(reverbDampFilter);
 reverbDampFilter.connect(reverbWet);
-reverbDry.connect(masterGain);
 reverbWet.connect(masterGain);
 
-// Filter → delay (parallel to reverb)
-filterNode.connect(delayDry);
+// DELAY send
 filterNode.connect(delayNode);
 delayNode.connect(delayToneFilter);
 delayToneFilter.connect(delayFeedback);
 delayFeedback.connect(delayNode);       // feedback loop
 delayToneFilter.connect(delayWet);
-delayDry.connect(masterGain);
 delayWet.connect(masterGain);
+
+// DRY path — single connection to master
+filterNode.connect(masterGain);
 
 masterGain.connect(compressor);
 compressor.connect(limiterNode);
@@ -1226,18 +1234,16 @@ function polyGainForCount(n) {
 }
 
 // Rescale all currently active voices to match a new total voice count
-// Uses voice.baseGain (the unscaled target at sustain peak) so there's no error accumulation
 function rescaleActiveVoices(totalCount) {
   const scale = polyGainForCount(totalCount);
   const now = AC.currentTime;
   Object.values(activeVoices).forEach(v => {
     if (!v.vcaGain || !v.baseGain) return;
-    // Only rescale if voice is in sustain (past attack+decay) or in attack/decay phase
-    // We update the scheduled ramp targets proportionally using the stored baseGain
+    if (v.releasing) return;  // don't interfere with release ramp
     const target = v.baseGain * scale;
-    // Smoothly glide to new target — 15ms time constant
+    v.vcaGain.gain.cancelScheduledValues(now);
     v.vcaGain.gain.setTargetAtTime(target, now, 0.015);
-    v.scaledGain = target; // track for release calculation
+    v.scaledGain = target;
   });
 }
 
@@ -1339,11 +1345,19 @@ function buildReverbImpulse(decayTime, dampAmt) {
 }
 
 function makeSaturatorCurve(drive) {
+  // NOTE: driveWS is no longer in the main signal chain (removed to prevent
+  // intermodulation between polyphonic voices). This function is kept for
+  // potential future per-voice saturation use.
   const n = 256, curve = new Float32Array(n);
-  const k = drive * 40;
-  for (let i = 0; i < n; i++) {
-    const x = (i * 2) / n - 1;
-    curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x));
+  if (drive <= 1.0) {
+    // Perfect linear passthrough for drive=1
+    for (let i = 0; i < n; i++) curve[i] = (i * 2) / n - 1;
+  } else {
+    const k = (drive - 1) * 40;
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      curve[i] = (Math.PI + k) * x / (Math.PI + k * Math.abs(x));
+    }
   }
   return curve;
 }
@@ -1355,16 +1369,18 @@ function midiNoteToFreq(note) { return 440 * Math.pow(2, (note - 69) / 12); }
 
 function noteOn(midiNote, velocity) {
   if (!S.audioReady) return;
+  // If this note is already playing, stop it cleanly first
   if (activeVoices[midiNote]) noteOff(midiNote);
 
   const vel = S.velSens > 0 ? (velocity / 127) * S.velSens + (1 - S.velSens) : 1;
   const now = AC.currentTime;
   const voice = {};
 
-  // ---- POLYPHONY SCALING: 1/sqrt(N) per voice ----
-  const newCount  = Object.keys(activeVoices).length + 1;
-  const polyScale = polyGainForCount(newCount);
-  rescaleActiveVoices(newCount);
+  // ---- POLYPHONY SCALING: each voice gets 1/sqrt(N) gain ----
+  // We do NOT rescale existing voices — the compressor handles peak limiting.
+  // Rescaling playing notes causes audible gain pumping.
+  const N         = Object.keys(activeVoices).length + 1;
+  const polyScale = polyGainForCount(N);
   voice.baseGain   = vel;
   voice.scaledGain = vel * polyScale;
 
@@ -1457,49 +1473,48 @@ function noteOn(midiNote, velocity) {
 function noteOff(midiNote) {
   const voice = activeVoices[midiNote];
   if (!voice) return;
-  const now = AC.currentTime;
+  const now    = AC.currentTime;
   const vcaRel = S.vca.rel;
   const vcfRel = S.vcf.rel;
 
+  // Mark as releasing so rescaleActiveVoices won't interfere
+  voice.releasing = true;
+
+  // Remove from activeVoices immediately so poly count is correct
+  delete activeVoices[midiNote];
+  updateVoiceCount();
+
+  // Rescale remaining voices now that this one is gone
+  const remainingCount = Object.keys(activeVoices).length;
+  rescaleActiveVoices(remainingCount || 1);
+
   // Per-voice VCF release
   if (voice.vcfFilt) {
-    const baseCutoff = S.vcf.cutoff;
     voice.vcfFilt.frequency.cancelScheduledValues(now);
     voice.vcfFilt.frequency.setValueAtTime(voice.vcfFilt.frequency.value, now);
     voice.vcfFilt.frequency.linearRampToValueAtTime(
-      Math.max(20, baseCutoff * 0.3), now + vcfRel);
+      Math.max(20, S.vcf.cutoff * 0.3), now + vcfRel);
   }
 
-  // Per-voice VCA release — cancel any in-flight ramps, ramp to silence
+  // Per-voice VCA release — ramp to silence
   if (voice.vcaGain) {
+    const curVol = Math.max(0.0001, voice.scaledGain || voice.vcaGain.gain.value);
     voice.vcaGain.gain.cancelScheduledValues(now);
-    // Use scaledGain if available (more accurate than .value which may lag)
-    const curVol = voice.scaledGain || voice.vcaGain.gain.value;
-    voice.vcaGain.gain.setValueAtTime(Math.max(0.0001, curVol), now);
+    voice.vcaGain.gain.setValueAtTime(curVol, now);
     voice.vcaGain.gain.exponentialRampToValueAtTime(0.0001, now + vcaRel);
   }
 
-  // Rescale remaining voices using their stored baseGain (no error accumulation)
-  // Count = current voices minus the one being released
-  const remainingCount = Math.max(1, Object.keys(activeVoices).length - 1);
-  rescaleActiveVoices(remainingCount);
-
-  // Stop oscillators after release
+  // Stop oscillators at end of release
   [voice.osc1, voice.osc2].filter(Boolean).forEach(o => {
     try { o.stop(now + vcaRel + 0.05); } catch(e){}
   });
 
-  // Disconnect after full release
+  // Disconnect all nodes after release tail finishes
   setTimeout(() => {
-    try {
-      ['preBus','vcfFilt','vcaGain','osc1gain','osc2gain','noiseTap'].forEach(k => {
-        try { if (voice[k]) voice[k].disconnect(); } catch(e) {}
-      });
-    } catch(e){}
-  }, (vcaRel + 0.2) * 1000);
-
-  delete activeVoices[midiNote];
-  updateVoiceCount();
+    ['preBus','vcfFilt','vcaGain','osc1gain','osc2gain','noiseTap'].forEach(k => {
+      try { if (voice[k]) voice[k].disconnect(); } catch(e) {}
+    });
+  }, (vcaRel + 0.25) * 1000);
 }
 
 // PWM oscillator: two detuned sawtooth oscillators with polarity inversion
@@ -1548,16 +1563,13 @@ function panicStop() {
   const now = AC.currentTime;
   // Hard-kill every active voice immediately
   Object.values(activeVoices).forEach(v => {
-    // Slam VCA to zero
     if (v.vcaGain) {
       v.vcaGain.gain.cancelScheduledValues(now);
       v.vcaGain.gain.setValueAtTime(0, now);
     }
-    // Stop oscillators right now
     [v.osc1, v.osc2].filter(Boolean).forEach(o => {
-      try { o.stop(now); } catch(e){}
+      try { o.stop(now + 0.001); } catch(e){}
     });
-    // Disconnect nodes
     ['preBus','vcfFilt','vcaGain','osc1gain','osc2gain','noiseTap'].forEach(k => {
       try { if(v[k]) v[k].disconnect(); } catch(e){}
     });
@@ -2277,7 +2289,6 @@ function toggleFxReverb() {
   btn.classList.toggle('active', FX.reverb.enabled);
   btn.textContent = FX.reverb.enabled ? 'ACTIVE' : 'BYPASS';
   reverbWet.gain.value = FX.reverb.enabled ? FX.reverb.mix : 0;
-  reverbDry.gain.value = 1.0;
 }
 
 function toggleFxDelay() {
@@ -2286,7 +2297,6 @@ function toggleFxDelay() {
   btn.classList.toggle('active', FX.delay.enabled);
   btn.textContent = FX.delay.enabled ? 'ACTIVE' : 'BYPASS';
   delayWet.gain.value = FX.delay.enabled ? FX.delay.mix : 0;
-  delayDry.gain.value = 1.0;
 }
 
 function applyFxKnob(param, val) {
@@ -2294,7 +2304,6 @@ function applyFxKnob(param, val) {
     case 'fx-rev-mix':
       FX.reverb.mix = val;
       reverbWet.gain.value = FX.reverb.enabled ? val : 0;
-      reverbDry.gain.value = FX.reverb.enabled ? (1 - val * 0.5) : 1.0;
       document.getElementById('fx-rev-mix-val').textContent = Math.round(val*100)+'%';
       break;
     case 'fx-rev-decay':
@@ -2316,7 +2325,6 @@ function applyFxKnob(param, val) {
     case 'fx-dly-mix':
       FX.delay.mix = val;
       delayWet.gain.value = FX.delay.enabled ? val : 0;
-      delayDry.gain.value = FX.delay.enabled ? (1 - val * 0.5) : 1.0;
       document.getElementById('fx-dly-mix-val').textContent = Math.round(val*100)+'%';
       break;
     case 'fx-dly-time':
